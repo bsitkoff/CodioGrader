@@ -1,11 +1,29 @@
 #!/usr/bin/env bash
 set -euo pipefail
+
+# Debug logging function
+log() {
+    if [ "${DEBUG}" -eq 1 ]; then
+        echo "[DEBUG] $1" >&2
+    fi
+}
+
 # Default to debug off unless explicitly set
 DEBUG=${DEBUG:-0}
 
 # Get script directory for config path
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CONFIG_PATH="${SCRIPT_DIR}/autograde_config.json"
+
+# Environment setup for Codio grading
+if [ -n "${CODIO_AUTOGRADE_ENV:-}" ]; then
+    log "Running in Codio assignment grading mode"
+    # Export variables that the Python grader needs
+    export CODIO_AUTOGRADE_ENV
+    export CODIO_AUTOGRADE_URL
+    export PYTHONPATH="/usr/share/codio/assessments:${PYTHONPATH:-}"
+fi
+
 # Check for GitHub token
 if [ -z "${GITHUB_TOKEN:-}" ]; then
     echo "ERROR: GITHUB_TOKEN environment variable is not set." >&2
