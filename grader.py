@@ -18,6 +18,9 @@ NOTION_STUDENTS_DATABASE_ID
 
 import os, sys, json, time, textwrap, pathlib, requests
 from datetime import datetime
+from time import perf_counter
+from openai import OpenAI
+import load_env  # Import the new environment loader
 
 # ------------------------------------------------------------
 # Configuration helpers
@@ -36,18 +39,21 @@ def load_code(file_list):
     return "\n\n".join(buf)
 
 # ------------------------------------------------------------
-# Thin wrapper around the new /responses endpoint
+# Wrapper around the OpenAI client responses API
 # ------------------------------------------------------------
-OPENAI_KEY = os.getenv("OPENAI_API_KEY")
-if not OPENAI_KEY:
+# Load environment variables from .env file
+try:
+    load_env.load(verbose=False)
+except FileNotFoundError:
+    print("Warning: .env file not found. Make sure environment variables are set manually.", file=sys.stderr)
+
+# Check for required API key
+if not os.getenv("OPENAI_API_KEY"):
     print("OPENAI_API_KEY is not set; aborting.", file=sys.stderr)
     sys.exit(1)
 
-HEADERS = {
-    "Authorization": f"Bearer {OPENAI_KEY}",
-    "Content-Type":  "application/json"
-}
-URL = "https://api.openai.com/v1/responses"
+# Initialize the OpenAI client
+openai_client = OpenAI()
 
 MODEL_CHAIN = [
     "gpt-4.1-nano-2025-04-14",
@@ -55,35 +61,30 @@ MODEL_CHAIN = [
     "gpt-3.5-turbo"
 ]
 
-def call_openai(dev_msg:str, user_msg:str) -> str:
-    """Try each model until one succeeds, return combined text output."""
-    payload_template = {
-        "instructions": dev_msg,
-        # When we supply `instructions` the field is high‑priority.
-        # Our actual prompt goes into `input`.
-        "input": user_msg,
-    }
-
+def call_openai(dev_msg:str, user_msg:str, override_model:str=None) -> str:
+    """Try each model until one succeeds, return text output."""
     last_err = None
-    for model in MODEL_CHAIN:
-        payload = dict(payload_template, model=model)
+    # Use override_model if provided, otherwise use the MODEL_CHAIN
+    models_to_try = [override_model] + MODEL_CHAIN[1:] if override_model else MODEL_CHAIN
+    for model in models_to_try:
         try:
-            r = requests.post(URL, headers=HEADERS, json=payload, timeout=30)
-            if r.status_code == 429:          # quota / rate limit
-                last_err = r.text; time.sleep(2); continue
-            r.raise_for_status()
-            data = r.json()
-            # SDKs expose `output_text`, but with bare HTTP call we need to
-            # concatenate all text outputs ourselves:
-            text_chunks = [
-                c["text"]
-                for item in data
-                for c in item.get("content", [])
-                if c.get("type") == "output_text"
-            ]
-            return "".join(text_chunks).strip()
+            # Using the client.responses.create method
+            response = openai_client.responses.create(
+                model=model,
+                instructions=dev_msg,
+                input=[
+                    {
+                        "role": "user", 
+                        "content": user_msg
+                    }
+                ]
+            )
+            # The SDK exposes output_text directly
+            return response.output_text.strip()
         except Exception as e:
             last_err = str(e)
+            print(f"Model {model} failed: {str(e)}", file=sys.stderr)
+            time.sleep(1)  # Brief pause before trying the next model
             continue
     raise RuntimeError(f"All models failed: {last_err}")
 
@@ -150,12 +151,16 @@ def notion_log(student_email:str, assignment_title:str, score:int, feedback:str,
 # Main grading logic
 # ------------------------------------------------------------
 def grade(config_path="autograde_config.json",
-          local_override_email=None):
+          local_override_email=None,
+          override_model=None):
     cfg      = load_config(config_path)
     code     = load_code(cfg["files"])
     prompt   = cfg.get("assignment_prompt", "")
     topic_id = cfg.get("grade_topic_id", "")
     assignment_title = cfg.get("assignment_title", "Codio Assignment")
+    
+    # Start timer for elapsed time tracking
+    start_time = perf_counter()
 
     #########################################
     # Build developer / user messages
@@ -175,17 +180,30 @@ def grade(config_path="autograde_config.json",
     """)
 
     try:
-        yn = call_openai(dev_msg, user_msg).lower()
+        yn = call_openai(dev_msg, user_msg, override_model).lower()
     except Exception as e:
         # Graceful failure path so students are not blocked
+        error_msg = f"⚠️ Autograder API error: {e}"
         if in_codio():
-            codio_send(0, f"⚠️ Autograder error: {e}")
+            codio_send(0, error_msg)
         else:
-            print("ERROR contacting OpenAI:", e, file=sys.stderr)
+            print("ERROR contacting OpenAI API:", e, file=sys.stderr)
+            print("Make sure your API key has access to the models and responses API.")
         return
 
-    passed = yn.startswith("y")
-    grade_val = 100 if passed else 50
+    # Check for unexpected responses (not yes/no)
+    if yn.startswith("y"):
+        passed = True
+        grade_val = 100
+    elif yn.startswith("n"):
+        passed = False
+        grade_val = 50
+    else:
+        # Unexpected response
+        passed = False
+        grade_val = 50
+        # Add the unexpected response to feedback
+        unexpected_response = f"⚠️ Note: The grader received an unexpected response: '{yn}'. Expected 'yes' or 'no'."
 
     #########################################
     # follow‑up feedback
@@ -196,7 +214,11 @@ def grade(config_path="autograde_config.json",
         fb_dev = ("You are a kind mentor. In <=2 short sentences explain "
                   "why the code might not run. Keep it friendly for an 11‑yo.")
 
-    feedback = call_openai(fb_dev, code if not passed else "")
+    feedback = call_openai(fb_dev, code if not passed else "", override_model)
+    
+    # Append unexpected response warning if applicable
+    if 'unexpected_response' in locals():
+        feedback = f"{feedback}\n\n{unexpected_response}"
 
     # -------------------------------------
     # Deliver results
@@ -211,23 +233,31 @@ def grade(config_path="autograde_config.json",
             notion_log(email, assignment_title, grade_val, feedback, topic_id)
         except Exception as e:
             # non‑fatal
+            # non‑fatal
             print("Notion log failed:", e, file=sys.stderr)
         sys.exit(0 if ok else 1)
     else:
+        # Calculate elapsed time
+        elapsed_time = perf_counter() - start_time
+        
         # Local test mode
         print(json.dumps({
             "grade": grade_val,
             "feedback": feedback,
-            "passed": passed
+            "passed": passed,
+            "elapsed_seconds": round(elapsed_time, 2)
         }, indent=2))
-
+        
+        # Print timing info to stderr
+        print(f"Elapsed time: {elapsed_time:.2f} seconds", file=sys.stderr)
 # ------------------------------------------------------------
 if __name__ == "__main__":
     import argparse
     ap = argparse.ArgumentParser(
         description="Run the Codio grader locally or inside Codio.")
     ap.add_argument("-c", "--config", default="autograde_config.json",
-                    help="Path to autograde_config.json")
+                   help="Path to autograde_config.json")
     ap.add_argument("--email", help="Override student e‑mail (local test)")
+    ap.add_argument("--model", help="Override primary model (e.g., gpt-4o)")
     args = ap.parse_args()
-    grade(args.config, local_override_email=args.email)
+    grade(args.config, local_override_email=args.email, override_model=args.model)

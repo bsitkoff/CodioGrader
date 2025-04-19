@@ -1,6 +1,10 @@
 {
+  "files": ["test_submission.py"],
+  "assignment_prompt": "Write a Python program that prints 'Hello, World!'",
+  "assignment_title": "Hello World Test",
+  "grade_topic_id": "",
   "assignment": {
-    "name": "Sample Assignment",
+    "name": "Hello World Assignment",
     "points_possible": 100,
     "tests": []
   },
