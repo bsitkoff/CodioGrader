@@ -2,13 +2,17 @@
 """
 codio‑grader  v1.0  (2025‑04‑19)
 
-• Primary model  : gpt‑4.1‑nano‑2025‑04‑14   (≈ $0.00013/run @ 330 tokens)
+• Primary model  : gpt‑4.1‑nano‑2025‑04‑14   (≈ $0.00013/run @ 330 tokens)
 • Fallback chain : gpt‑4o‑mini  ➜  gpt‑3.5‑turbo
 
 Environment vars expected
 -------------------------
-OPENAI_API_KEY               required
-CODIO_AUTOGRADE_ENV          set by Codio   (absent when you test locally)
+# Required - at least one of these must be set:
+OPENAI_API_KEY               legacy/fallback API key
+CODIO_DIRECT_OPENAI_KEY     direct API access (preferred when available)
+CODIO_DIRECT_OPENAI_BASE    base URL for direct API (optional)
+
+CODIO_AUTOGRADE_ENV         set by Codio   (absent when you test locally)
 
 # The following are optional.  If absent, Notion calls are skipped.
 NOTION_API_KEY
@@ -20,6 +24,44 @@ import os, sys, json, time, textwrap, pathlib, requests
 from datetime import datetime
 from time import perf_counter
 from openai import OpenAI
+
+# ------------------------------------------------------------
+# OpenAI client configuration
+# ------------------------------------------------------------
+def create_openai_clients():
+    """Create OpenAI clients for both direct and fallback configurations.
+    Returns a dictionary with 'direct' and 'fallback' clients."""
+    clients = {}
+    
+    # Try to create direct client first
+    direct_key = os.getenv("CODIO_DIRECT_OPENAI_KEY")
+    direct_base = os.getenv("CODIO_DIRECT_OPENAI_BASE", "https://api.openai.com/v1")
+    
+    if direct_key:
+        print(f"DEBUG: Configuring direct OpenAI client with base URL: {direct_base}", file=sys.stderr)
+        try:
+            clients["direct"] = OpenAI(
+                api_key=direct_key,
+                base_url=direct_base
+            )
+            print("DEBUG: Direct OpenAI client created successfully", file=sys.stderr)
+        except Exception as e:
+            print(f"DEBUG: Failed to create direct client: {e}", file=sys.stderr)
+    else:
+        print("DEBUG: No direct OpenAI configuration found (CODIO_DIRECT_OPENAI_KEY not set)", file=sys.stderr)
+    
+    # Create fallback client if fallback key exists
+    fallback_key = os.getenv("OPENAI_API_KEY")
+    if fallback_key:
+        print("DEBUG: Creating fallback OpenAI client with default configuration", file=sys.stderr)
+        clients["fallback"] = OpenAI()
+    else:
+        print("DEBUG: No fallback configuration found (OPENAI_API_KEY not set)", file=sys.stderr)
+    
+    if not clients:
+        raise RuntimeError("No valid OpenAI configuration found. Set either CODIO_DIRECT_OPENAI_KEY or OPENAI_API_KEY")
+    
+    return clients
 
 # ------------------------------------------------------------
 # Configuration helpers
@@ -67,13 +109,10 @@ try:
 except FileNotFoundError:
     print("Warning: .env file not found. Make sure environment variables are set manually.", file=sys.stderr)
 
-# Check for required API key
-if not os.getenv("OPENAI_API_KEY"):
-    print("OPENAI_API_KEY is not set; aborting.", file=sys.stderr)
-    sys.exit(1)
-
-# Initialize the OpenAI client
-openai_client = OpenAI()
+# Initialize the OpenAI clients
+print("DEBUG: Initializing OpenAI clients...", file=sys.stderr)
+openai_clients = create_openai_clients()
+print(f"DEBUG: Created clients with configurations: {list(openai_clients.keys())}", file=sys.stderr)
 
 MODEL_CHAIN = [
     "gpt-4.1-nano-2025-04-14",
@@ -82,31 +121,62 @@ MODEL_CHAIN = [
 ]
 
 def call_openai(dev_msg:str, user_msg:str, override_model:str=None) -> str:
-    """Try each model until one succeeds, return text output."""
+    """Try each model until one succeeds, return text output.
+    First tries direct OpenAI connection if available, then falls back to default."""
     last_err = None
+    
     # Use override_model if provided, otherwise use the MODEL_CHAIN
     models_to_try = [override_model] + MODEL_CHAIN[1:] if override_model else MODEL_CHAIN
-    for model in models_to_try:
-        try:
-            # Using the client.responses.create method
-            response = openai_client.responses.create(
-                model=model,
-                instructions=dev_msg,
-                input=[
-                    {
-                        "role": "user", 
-                        "content": user_msg
-                    }
-                ]
-            )
-            # The SDK exposes output_text directly
-            return response.output_text.strip()
-        except Exception as e:
-            last_err = str(e)
-            print(f"Model {model} failed: {str(e)}", file=sys.stderr)
-            time.sleep(1)  # Brief pause before trying the next model
-            continue
-    raise RuntimeError(f"All models failed: {last_err}")
+    
+    # Try direct client first if available
+    if "direct" in openai_clients:
+        print("DEBUG: Attempting to use direct OpenAI client first", file=sys.stderr)
+        for model in models_to_try:
+            try:
+                print(f"DEBUG: Trying model {model} with direct client", file=sys.stderr)
+                response = openai_clients["direct"].responses.create(
+                    model=model,
+                    instructions=dev_msg,
+                    input=[
+                        {
+                            "role": "user", 
+                            "content": user_msg
+                        }
+                    ]
+                )
+                print("DEBUG: Direct client request successful", file=sys.stderr)
+                return response.output_text.strip()
+            except Exception as e:
+                last_err = f"Direct API failed: {str(e)}"
+                print(f"DEBUG: Direct API - Model {model} failed: {str(e)}", file=sys.stderr)
+                continue
+        print("DEBUG: All models failed with direct client, falling back to default", file=sys.stderr)
+    
+    # Try fallback client if available
+    if "fallback" in openai_clients:
+        print("DEBUG: Attempting to use fallback OpenAI client", file=sys.stderr)
+        for model in models_to_try:
+            try:
+                print(f"DEBUG: Trying model {model} with fallback client", file=sys.stderr)
+                response = openai_clients["fallback"].responses.create(
+                    model=model,
+                    instructions=dev_msg,
+                    input=[
+                        {
+                            "role": "user", 
+                            "content": user_msg
+                        }
+                    ]
+                )
+                print("DEBUG: Fallback client request successful", file=sys.stderr)
+                return response.output_text.strip()
+            except Exception as e:
+                last_err = f"Fallback API failed: {str(e)}"
+                print(f"DEBUG: Fallback API - Model {model} failed: {str(e)}", file=sys.stderr)
+                time.sleep(1)  # Brief pause before trying the next model
+                continue
+    
+    raise RuntimeError(f"All API attempts failed: {last_err}")
 
 # ------------------------------------------------------------
 # Codio helpers (loaded lazily so local runs don't fail)
@@ -120,7 +190,7 @@ def codio_send(grade:int, feedback:str):
     from lib.grade import send_grade_v2, FORMAT_V2_MD
     return send_grade_v2(grade, feedback, FORMAT_V2_MD)
 
-# OPTIONAL – Notion logging (works only if all IDs + key present)
+# OPTIONAL – Notion logging (works only if all IDs + key present)
 def notion_log(student_email:str, assignment_title:str, score:int, feedback:str,
                topic_id:str):
     key   = os.getenv("NOTION_API_KEY")
@@ -185,13 +255,13 @@ def grade(config_path="autograde_config.json",
     #########################################
     # Build developer / user messages
     #########################################
-    dev_msg = textwrap.dedent("""\
+    dev_msg = textwrap.dedent("""
         You are an auto‑grader for middle‑school Python assignments.
-        Respond ONLY with “yes” or “no” (lowercase) when asked if code
+        Respond ONLY with "yes" or "no" (lowercase) when asked if code
         meets the assignment requirements; no extra text.
     """)
 
-    user_msg = textwrap.dedent(f"""\
+    user_msg = textwrap.dedent(f"""
         ## Assignment instructions
         {prompt}
 
@@ -253,7 +323,6 @@ def grade(config_path="autograde_config.json",
             notion_log(email, assignment_title, grade_val, feedback, topic_id)
         except Exception as e:
             # non‑fatal
-            # non‑fatal
             print("Notion log failed:", e, file=sys.stderr)
         sys.exit(0 if ok else 1)
     else:
@@ -270,6 +339,7 @@ def grade(config_path="autograde_config.json",
         
         # Print timing info to stderr
         print(f"Elapsed time: {elapsed_time:.2f} seconds", file=sys.stderr)
+
 # ------------------------------------------------------------
 if __name__ == "__main__":
     import argparse
