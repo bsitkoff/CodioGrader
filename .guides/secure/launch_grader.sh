@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
+# Default to debug off unless explicitly set
+DEBUG=${DEBUG:-0}
 
 # Check for GitHub token
 if [ -z "${GITHUB_TOKEN:-}" ]; then
