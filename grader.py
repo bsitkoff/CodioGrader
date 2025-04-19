@@ -26,6 +26,42 @@ from time import perf_counter
 from openai import OpenAI
 
 # ------------------------------------------------------------
+# Minimal logger – write to stderr only when DEBUG env var is true
+# ------------------------------------------------------------
+DEBUG = os.getenv("DEBUG", "0") not in ("0", "", "false", "False")
+
+def log(msg: str):
+    if DEBUG:
+        print(f"[DEBUG] {msg}", file=sys.stderr)
+
+#!/usr/bin/env python3
+"""
+codio‑grader  v1.0  (2025‑04‑19)
+
+• Primary model  : gpt‑4.1‑nano‑2025‑04‑14   (≈ $0.00013/run @ 330 tokens)
+• Fallback chain : gpt‑4o‑mini  ➜  gpt‑3.5‑turbo
+
+Environment vars expected
+-------------------------
+# Required - at least one of these must be set:
+OPENAI_API_KEY               legacy/fallback API key
+CODIO_DIRECT_OPENAI_KEY     direct API access (preferred when available)
+CODIO_DIRECT_OPENAI_BASE    base URL for direct API (optional)
+
+CODIO_AUTOGRADE_ENV         set by Codio   (absent when you test locally)
+
+# The following are optional.  If absent, Notion calls are skipped.
+NOTION_API_KEY
+NOTION_GRADES_DATABASE_ID
+NOTION_STUDENTS_DATABASE_ID
+"""
+
+import os, sys, json, time, textwrap, pathlib, requests
+from datetime import datetime
+from time import perf_counter
+from openai import OpenAI
+
+# ------------------------------------------------------------
 # OpenAI client configuration
 # ------------------------------------------------------------
 def create_openai_clients():
@@ -38,25 +74,25 @@ def create_openai_clients():
     direct_base = os.getenv("CODIO_DIRECT_OPENAI_BASE", "https://api.openai.com/v1")
     
     if direct_key:
-        print(f"DEBUG: Configuring direct OpenAI client with base URL: {direct_base}", file=sys.stderr)
+        log(f"Configuring direct OpenAI client with base URL: {direct_base}")
         try:
             clients["direct"] = OpenAI(
                 api_key=direct_key,
                 base_url=direct_base
             )
-            print("DEBUG: Direct OpenAI client created successfully", file=sys.stderr)
+            log("Direct OpenAI client created successfully")
         except Exception as e:
-            print(f"DEBUG: Failed to create direct client: {e}", file=sys.stderr)
+            log(f"Failed to create direct client: {e}")
     else:
-        print("DEBUG: No direct OpenAI configuration found (CODIO_DIRECT_OPENAI_KEY not set)", file=sys.stderr)
+        log("No direct OpenAI configuration found (CODIO_DIRECT_OPENAI_KEY not set)")
     
     # Create fallback client if fallback key exists
     fallback_key = os.getenv("OPENAI_API_KEY")
     if fallback_key:
-        print("DEBUG: Creating fallback OpenAI client with default configuration", file=sys.stderr)
+        log("Creating fallback OpenAI client with default configuration")
         clients["fallback"] = OpenAI()
     else:
-        print("DEBUG: No fallback configuration found (OPENAI_API_KEY not set)", file=sys.stderr)
+        log("No fallback configuration found (OPENAI_API_KEY not set)")
     
     if not clients:
         raise RuntimeError("No valid OpenAI configuration found. Set either CODIO_DIRECT_OPENAI_KEY or OPENAI_API_KEY")
@@ -110,9 +146,9 @@ except FileNotFoundError:
     print("Warning: .env file not found. Make sure environment variables are set manually.", file=sys.stderr)
 
 # Initialize the OpenAI clients
-print("DEBUG: Initializing OpenAI clients...", file=sys.stderr)
+log("Initializing OpenAI clients...")
 openai_clients = create_openai_clients()
-print(f"DEBUG: Created clients with configurations: {list(openai_clients.keys())}", file=sys.stderr)
+log(f"Created clients with configurations: {list(openai_clients.keys())}")
 
 MODEL_CHAIN = [
     "gpt-4.1-nano-2025-04-14",
@@ -130,10 +166,10 @@ def call_openai(dev_msg:str, user_msg:str, override_model:str=None) -> str:
     
     # Try direct client first if available
     if "direct" in openai_clients:
-        print("DEBUG: Attempting to use direct OpenAI client first", file=sys.stderr)
+        log("Attempting to use direct OpenAI client first")
         for model in models_to_try:
             try:
-                print(f"DEBUG: Trying model {model} with direct client", file=sys.stderr)
+                log(f"Trying model {model} with direct client")
                 response = openai_clients["direct"].responses.create(
                     model=model,
                     instructions=dev_msg,
@@ -144,20 +180,20 @@ def call_openai(dev_msg:str, user_msg:str, override_model:str=None) -> str:
                         }
                     ]
                 )
-                print("DEBUG: Direct client request successful", file=sys.stderr)
+                log("Direct client request successful")
                 return response.output_text.strip()
             except Exception as e:
                 last_err = f"Direct API failed: {str(e)}"
-                print(f"DEBUG: Direct API - Model {model} failed: {str(e)}", file=sys.stderr)
+                log(f"Direct API - Model {model} failed: {str(e)}")
                 continue
-        print("DEBUG: All models failed with direct client, falling back to default", file=sys.stderr)
+        log("All models failed with direct client, falling back to default")
     
     # Try fallback client if available
     if "fallback" in openai_clients:
-        print("DEBUG: Attempting to use fallback OpenAI client", file=sys.stderr)
+        log("Attempting to use fallback OpenAI client")
         for model in models_to_try:
             try:
-                print(f"DEBUG: Trying model {model} with fallback client", file=sys.stderr)
+                log(f"Trying model {model} with fallback client")
                 response = openai_clients["fallback"].responses.create(
                     model=model,
                     instructions=dev_msg,
@@ -168,11 +204,11 @@ def call_openai(dev_msg:str, user_msg:str, override_model:str=None) -> str:
                         }
                     ]
                 )
-                print("DEBUG: Fallback client request successful", file=sys.stderr)
+                log("Fallback client request successful")
                 return response.output_text.strip()
             except Exception as e:
                 last_err = f"Fallback API failed: {str(e)}"
-                print(f"DEBUG: Fallback API - Model {model} failed: {str(e)}", file=sys.stderr)
+                log(f"Fallback API - Model {model} failed: {str(e)}")
                 time.sleep(1)  # Brief pause before trying the next model
                 continue
     
