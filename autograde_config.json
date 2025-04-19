@@ -1,0 +1,11 @@
+{
+  "assignment": {
+    "name": "Sample Assignment",
+    "points_possible": 100,
+    "tests": []
+  },
+  "grading": {
+    "feedback_format": "markdown",
+    "partial_credit": true
+  }
+}
