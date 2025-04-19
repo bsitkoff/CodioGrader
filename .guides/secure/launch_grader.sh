@@ -15,7 +15,7 @@ fi
 
 RAW_URL="https://raw.githubusercontent.com/bsitkoff/CodioGrader/main/grader.py"
 
-# Try to download and run the grader
+# Try to download and run the grader, passing all arguments
 curl -fsSL \
      -H "Accept: application/vnd.github.raw" \
      -H "Authorization: token ${GITHUB_TOKEN}" \

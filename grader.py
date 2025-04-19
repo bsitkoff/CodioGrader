@@ -20,7 +20,6 @@ import os, sys, json, time, textwrap, pathlib, requests
 from datetime import datetime
 from time import perf_counter
 from openai import OpenAI
-import load_env  # Import the new environment loader
 
 # ------------------------------------------------------------
 # Configuration helpers
@@ -39,11 +38,32 @@ def load_code(file_list):
     return "\n\n".join(buf)
 
 # ------------------------------------------------------------
+# Environment variable loader (from load_env.py)
+# ------------------------------------------------------------
+def load_env_vars(env_path=".env", verbose=False):
+    """Load environment variables from a .env file"""
+    p = pathlib.Path(env_path)
+    if not p.exists():
+        if verbose:
+            print(f"[load_env] {env_path} not found – skipping.", file=sys.stderr)
+        raise FileNotFoundError(f"Environment file not found: {env_path}")
+    
+    for line in p.read_text().splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        k, v = line.split("=", 1)
+        os.environ.setdefault(k, v)
+    
+    if verbose:
+        print(f"[load_env] variables from {env_path} loaded.")
+
+# ------------------------------------------------------------
 # Wrapper around the OpenAI client responses API
 # ------------------------------------------------------------
 # Load environment variables from .env file
 try:
-    load_env.load(verbose=False)
+    load_env_vars(verbose=False)
 except FileNotFoundError:
     print("Warning: .env file not found. Make sure environment variables are set manually.", file=sys.stderr)
 
