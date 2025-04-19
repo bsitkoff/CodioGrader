@@ -3,6 +3,9 @@ set -euo pipefail
 # Default to debug off unless explicitly set
 DEBUG=${DEBUG:-0}
 
+# Get script directory for config path
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+CONFIG_PATH="${SCRIPT_DIR}/autograde_config.json"
 # Check for GitHub token
 if [ -z "${GITHUB_TOKEN:-}" ]; then
     echo "ERROR: GITHUB_TOKEN environment variable is not set." >&2
@@ -21,7 +24,7 @@ RAW_URL="https://raw.githubusercontent.com/bsitkoff/CodioGrader/main/grader.py"
 curl -fsSL \
      -H "Accept: application/vnd.github.raw" \
      -H "Authorization: token ${GITHUB_TOKEN}" \
-     "${RAW_URL}" | python3 - "$@" || {
+     "${RAW_URL}" | python3 - --config "${CONFIG_PATH}" "$@" || {
     # If that fails, print diagnostic information (without exposing the token)
     echo "Error: Failed to download grader script" >&2
     echo "URL: ${RAW_URL}" >&2
