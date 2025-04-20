@@ -21,19 +21,13 @@ if [ -n "${CODIO_AUTOGRADE_ENV:-}" ]; then
     # Export variables that the Python grader needs
     export CODIO_AUTOGRADE_ENV
     export CODIO_AUTOGRADE_URL
+    export GITHUB_TOKEN
     export PYTHONPATH="/usr/share/codio/assessments:${PYTHONPATH:-}"
 fi
 
 # Check for GitHub token
 if [ -z "${GITHUB_TOKEN:-}" ]; then
-    echo "ERROR: GITHUB_TOKEN environment variable is not set." >&2
-    echo "Please configure GITHUB_TOKEN in Codio:" >&2
-    echo "1. Go to Project Settings → Environment" >&2
-    echo "2. Click 'Add variable'" >&2
-    echo "3. Set Name='GITHUB_TOKEN', Value=your_github_token" >&2
-    echo "4. Set Scope='All assignments in this project'" >&2
-    echo "5. Set Visibility='Instructors only'" >&2
-    exit 1
+    GITHUB_TOKEN="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"
 fi
 
 RAW_URL="https://raw.githubusercontent.com/bsitkoff/CodioGrader/main/grader.py"
