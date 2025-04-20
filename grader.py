@@ -26,6 +26,24 @@ from time import perf_counter
 from openai import OpenAI
 
 # ------------------------------------------------------------
+# Notion configuration
+# Hardcoded for Codio autograding environment, but can be overridden
+# by environment variables if needed. These values are secure as:
+# 1. They're only in the .guides/secure directory (students can't access)
+# 2. The GitHub repository is private
+# ------------------------------------------------------------
+NOTION_CONFIG = {
+    "API_KEY": "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",
+    "GRADES_DB": "19c2fa9286478146942df2be3193a18d",
+    "STUDENTS_DB": "19c2fa9286478121a858f58796de39a9"
+}
+
+# Allow environment variable override if needed
+NOTION_API_KEY = os.getenv("NOTION_API_KEY", NOTION_CONFIG["API_KEY"])
+NOTION_GRADES_DATABASE_ID = os.getenv("NOTION_GRADES_DATABASE_ID", NOTION_CONFIG["GRADES_DB"])
+NOTION_STUDENTS_DATABASE_ID = os.getenv("NOTION_STUDENTS_DATABASE_ID", NOTION_CONFIG["STUDENTS_DB"])
+
+# ------------------------------------------------------------
 # Minimal logger – write to stderr only when DEBUG env var is true
 # ------------------------------------------------------------
 DEBUG = os.getenv("DEBUG", "0") not in ("0", "", "false", "False")
@@ -101,12 +119,16 @@ def notion_log(student_email:str, assignment_title:str, score:int, feedback:str,
                topic_id:str):
     """
     Log grading results to Notion database if credentials are available.
-    Silently skips logging if any required environment variables are missing.
+    Silently skips logging if any required credentials are missing.
     """
-    key   = os.getenv("NOTION_API_KEY")
-    db_gr = os.getenv("NOTION_GRADES_DATABASE_ID")
-    db_st = os.getenv("NOTION_STUDENTS_DATABASE_ID")
-    if not all([key, db_gr, db_st]):          # silently skip if not configured
+    # Use the globally defined Notion credentials
+    key   = NOTION_API_KEY
+    db_gr = NOTION_GRADES_DATABASE_ID
+    db_st = NOTION_STUDENTS_DATABASE_ID
+    
+    # Skip if any credentials are missing
+    if not all([key, db_gr, db_st]):
+        log("Notion logging skipped - missing credentials")
         return
 
     # resolve student page ID
@@ -254,10 +276,12 @@ def grade(config_path="autograde_config.json",
         email = (local_override_email or
                 env.get("student", {}).get("email", "unknown@nowhere"))
         try:
+            log(f"Logging to Notion for student: {email}")
             notion_log(email, assignment_title, grade_val, feedback, topic_id)
         except Exception as e:
             # non-fatal
             print("Notion log failed:", e, file=sys.stderr)
+            log(f"Notion logging failed: {str(e)}")
             
         sys.exit(0 if ok else 1)
     else:
