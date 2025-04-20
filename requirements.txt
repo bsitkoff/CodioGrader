@@ -1,0 +1,3 @@
+openai>=1.15
+requests>=2.31
+
