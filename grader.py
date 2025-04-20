@@ -52,6 +52,12 @@ def log(msg: str):
     if DEBUG:
         print(f"[DEBUG] {msg}", file=sys.stderr)
 
+# Log Notion configuration if debug enabled
+if DEBUG:
+    log(f"Notion API Key: {NOTION_API_KEY[:5]}...{NOTION_API_KEY[-5:]}")
+    log(f"Notion Grades DB: {NOTION_GRADES_DATABASE_ID}")
+    log(f"Notion Students DB: {NOTION_STUDENTS_DATABASE_ID}")
+
 # ------------------------------------------------------------
 # Configuration helpers
 # ------------------------------------------------------------
@@ -130,6 +136,8 @@ def notion_log(student_email:str, assignment_title:str, score:int, feedback:str,
     if not all([key, db_gr, db_st]):
         log("Notion logging skipped - missing credentials")
         return
+        
+    log(f"Notion credentials validated - proceeding with student lookup for {student_email}")
 
     # resolve student page ID
     headers = {
@@ -151,8 +159,12 @@ def notion_log(student_email:str, assignment_title:str, score:int, feedback:str,
                 student_page_id = page["id"]; break
         if student_page_id or not resp.get("has_more"): break
         cursor = resp.get("next_cursor")
+    
     if not student_page_id:           # don't crash grader on lookup failure
+        log(f"Student not found in Notion database: {student_email}")
         return
+        
+    log(f"Found student in Notion: {student_email} with ID: {student_page_id[:8]}...")
 
     payload = {
         "parent": {"database_id": db_gr},
@@ -166,9 +178,15 @@ def notion_log(student_email:str, assignment_title:str, score:int, feedback:str,
             "Grade Topic": {"relation":[{"id": topic_id}]}
         }
     }
-    requests.post("https://api.notion.com/v1/pages",
+    
+    log(f"Creating Notion grade entry for {assignment_title} with score: {score}")
+    response = requests.post("https://api.notion.com/v1/pages",
                   headers=headers, json=payload)
-
+    
+    if response.status_code == 200:
+        log(f"Successfully created Notion grade entry")
+    else:
+        log(f"Notion API response: {response.status_code} - {response.text[:100]}...")
 # ------------------------------------------------------------
 # Main grading logic
 # ------------------------------------------------------------
