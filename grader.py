@@ -278,7 +278,7 @@ def grade(config_path="autograde_config.json",
     try:
         feedback = call_openai(feedback_system_msg, feedback_user_msg, override_model)
         # Prepend the appropriate emoji based on pass/fail
-        feedback = "✓ " + feedback if passed else "❌ " + feedback
+        feedback = "✅ " + feedback if passed else "❓ " + feedback
         
         # Append unexpected response warning if applicable
         if 'unexpected_response' in locals():
