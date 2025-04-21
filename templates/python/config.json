@@ -1,0 +1,66 @@
+{
+    "assignment": {
+        "name": "Python Assignment Template",
+        "description": "Basic Python programming assignment with function implementations",
+        "points_possible": 100,
+        "type": "python",
+        "student_files": ["/home/codio/workspace/solution.py"]
+    },
+    "rubric": {
+        "categories": [
+            {
+                "name": "Functionality",
+                "points": 60,
+                "criteria": [
+                    {
+                        "description": "Function implementation",
+                        "points": 40,
+                        "type": "ai_review",
+                        "system_prompt": "You are evaluating a Python function implementation. Check if the code correctly implements the required functionality. Score from 0-40 based on correctness and completeness."
+                    },
+                    {
+                        "description": "Program produces correct output",
+                        "points": 20,
+                        "type": "output_match",
+                        "expected": "Hello, World!",
+                        "partial_credit": true
+                    }
+                ]
+            },
+            {
+                "name": "Code Quality",
+                "points": 40,
+                "criteria": [
+                    {
+                        "description": "Code is well-commented",
+                        "points": 20,
+                        "type": "ai_review",
+                        "system_prompt": "You are evaluating Python code comments. Score from 0-20 based on the quality, clarity, and completeness of comments throughout the code."
+                    },
+                    {
+                        "description": "Code follows style guidelines",
+                        "points": 20,
+                        "type": "ai_review",
+                        "system_prompt": "You are evaluating Python code style. Score from 0-20 based on adherence to PEP 8 conventions, proper variable naming, and overall readability."
+                    }
+                ]
+            }
+        ]
+    },
+    "ai_feedback": {
+        "enabled": true,
+        "prompt_template": "You are a kind, supportive teacher giving feedback to a student on their Python code. Focus on 1-2 specific things they did well and 1-2 constructive suggestions for improvement. Keep your feedback encouraging, specific, and actionable. Limit your response to 2-3 sentences.",
+        "max_suggestions": 2
+    },
+    "notion": {
+        "enabled": true,
+        "grade_topic_id": "your_grade_topic_id_here",
+        "properties": {
+            "Status": "Graded",
+            "Grade": "{{points_earned}}/{{points_possible}}",
+            "Feedback": "{{ai_feedback}}",
+            "Submission Date": "{{submission_date}}"
+        }
+    }
+}
+

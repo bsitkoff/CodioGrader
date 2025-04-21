@@ -1,4 +1,362 @@
 #!/usr/bin/env python3
+import os
+import sys
+import json
+import argparse
+from datetime import datetime
+import requests
+import re
+import subprocess
+from typing import Dict, List, Any, Tuple
+
+class AutoGrader:
+    def __init__(self, config_path: str):
+        self.config = self._load_config(config_path)
+        self.openai_key = os.getenv('OPENAI_API_KEY')
+        self.notion_key = os.getenv('NOTION_API_KEY')
+        self.notion_grades_db = os.getenv('NOTION_GRADES_DATABASE_ID')
+        self.notion_students_db = os.getenv('NOTION_STUDENTS_DATABASE_ID')
+        self.debug = os.getenv('DEBUG', '0') == '1'
+        self.codio_env = self._parse_codio_env()
+
+    def _parse_codio_env(self) -> Dict:
+        """Parse Codio environment variables if available"""
+        codio_env_json = os.getenv('CODIO_AUTOGRADE_ENV')
+        if not codio_env_json:
+            self.log("Not running in Codio environment")
+            return {}
+        
+        try:
+            return json.loads(codio_env_json)
+        except Exception as e:
+            self.log(f"Failed to parse CODIO_AUTOGRADE_ENV: {str(e)}")
+            return {}
+
+    def _load_config(self, path: str) -> Dict:
+        with open(path, 'r') as f:
+            return json.load(f)
+
+    def log(self, message: str) -> None:
+        """Debug logging"""
+        if self.debug:
+            print(f"[DEBUG] {message}", file=sys.stderr)
+
+    def _check_environment(self) -> None:
+        """Verify all required environment variables are set"""
+        required_vars = {
+            'OPENAI_API_KEY': self.openai_key,
+        }
+        
+        # Only require Notion variables if Notion is enabled
+        if self.config.get('notion', {}).get('enabled', False):
+            required_vars.update({
+                'NOTION_API_KEY': self.notion_key,
+                'NOTION_GRADES_DATABASE_ID': self.notion_grades_db,
+                'NOTION_STUDENTS_DATABASE_ID': self.notion_students_db
+            })
+            
+        missing = [k for k, v in required_vars.items() if not v]
+        if missing:
+            raise ValueError(f"Missing required environment variables: {', '.join(missing)}")
+
+    def _read_student_file(self, path: str) -> str:
+        """Read a student's submission file"""
+        try:
+            with open(path, 'r') as f:
+                return f.read()
+        except Exception as e:
+            raise ValueError(f"Failed to read student file {path}: {str(e)}")
+
+    def _evaluate_criterion(self, criterion: Dict, code: str) -> Dict:
+        """Evaluate a single criterion"""
+        score = 0
+        feedback = ""
+        
+        self.log(f"Evaluating criterion: {criterion['description']}")
+        
+        if criterion['type'] == 'ai_review':
+            score, feedback = self._ai_review(criterion, code)
+        elif criterion['type'] in ['python_syntax', 'microbit_blocks', 'scratch_blocks']:
+            score, feedback = self._check_syntax(criterion, code)
+        elif criterion['type'] == 'output_match':
+            score, feedback = self._check_output(criterion, code)
+        else:
+            feedback = f"Unknown criterion type: {criterion['type']}"
+        
+        # Cap score at maximum points for this criterion
+        score = min(score, criterion['points'])
+        
+        return {
+            'score': score,
+            'feedback': feedback,
+            'max_points': criterion['points']
+        }
+
+    def _ai_review(self, criterion: Dict, code: str) -> Tuple[float, str]:
+        """Get AI review for code"""
+        try:
+            system_prompt = criterion.get('system_prompt', 'You are a teacher evaluating student code.')
+            self.log(f"AI Review with prompt: {system_prompt[:50]}...")
+            
+            # Check if we're using a Codio BricksLLM proxy
+            openai_base_url = os.getenv('OPENAI_BASE_URL')
+            
+            headers = {
+                'Authorization': f'Bearer {self.openai_key}',
+                'Content-Type': 'application/json'
+            }
+            
+            api_url = f"{openai_base_url}/chat/completions" if openai_base_url else "https://api.openai.com/v1/chat/completions"
+            
+            response = requests.post(
+                api_url,
+                headers=headers,
+                json={
+                    'model': 'gpt-4',  # Adjust based on availability
+                    'messages': [
+                        {'role': 'system', 'content': system_prompt},
+                        {'role': 'user', 'content': code}
+                    ]
+                }
+            )
+            
+            if response.status_code != 200:
+                raise Exception(f"OpenAI API error: {response.status_code} - {response.text}")
+                
+            result = response.json()
+            feedback = result['choices'][0]['message']['content']
+            
+            # Extract score from feedback if it starts with a number (as per system prompt)
+            try:
+                score_match = re.match(r'^\s*(\d+(\.\d+)?)', feedback)
+                if score_match:
+                    score = float(score_match.group(1))
+                    # Remove the score from the feedback
+                    feedback = feedback[score_match.end():].strip()
+                else:
+                    score = 0
+            except:
+                score = 0
+                
+            return score, feedback
+            
+        except Exception as e:
+            self.log(f"AI review failed: {str(e)}")
+            return 0, f"AI review failed: {str(e)}"
+
+    def _check_syntax(self, criterion: Dict, code: str) -> Tuple[float, str]:
+        """Check code syntax based on criterion type"""
+        try:
+            if criterion['type'] == 'python_syntax':
+                # Check Python syntax
+                return self._check_python_syntax(criterion, code)
+            elif criterion['type'] == 'microbit_blocks':
+                # For microbit, we can check for specific imports or patterns
+                return self._check_microbit_syntax(criterion, code)
+            elif criterion['type'] == 'scratch_blocks':
+                # For scratch, we would need a different approach
+                return 0, "Scratch syntax checking not implemented"
+            else:
+                return 0, f"Unknown syntax check type: {criterion['type']}"
+        except Exception as e:
+            self.log(f"Syntax check failed: {str(e)}")
+            return 0, f"Syntax check failed: {str(e)}"
+
+    def _check_python_syntax(self, criterion: Dict, code: str) -> Tuple[float, str]:
+        """Check Python syntax and required elements"""
+        # First, check if the code compiles
+        try:
+            compile(code, '<string>', 'exec')
+        except Exception as e:
+            return 0, f"Syntax error: {str(e)}"
+            
+        # Check for required elements
+        required_elements = criterion.get('required_elements', [])
+        found_elements = []
+        missing_elements = []
+        
+        for element in required_elements:
+            if element == 'function_definition':
+                if re.search(r'def\s+\w+\s*\(', code):
+                    found_elements.append(element)
+                else:
+                    missing_elements.append(element)
+            elif element == 'while_loop':
+                if re.search(r'while\s+.+:', code):
+                    found_elements.append(element)
+                else:
+                    missing_elements.append(element)
+            elif element == 'for_loop':
+                if re.search(r'for\s+.+\s+in\s+.+:', code):
+                    found_elements.append(element)
+                else:
+                    missing_elements.append(element)
+            elif element == 'if_statement':
+                if re.search(r'if\s+.+:', code):
+                    found_elements.append(element)
+                else:
+                    missing_elements.append(element)
+            # Add more element checks as needed
+        
+        # Calculate score based on found elements
+        if not required_elements:
+            score = criterion['points']  # Full points if no specific elements required
+        else:
+            score = (len(found_elements) / len(required_elements)) * criterion['points']
+        
+        # Generate feedback
+        if missing_elements:
+            feedback = f"Missing required elements: {', '.join(missing_elements)}"
+        else:
+            feedback = "All required elements found"
+            
+        return score, feedback
+
+    def _check_microbit_syntax(self, criterion: Dict, code: str) -> Tuple[float, str]:
+        """Check Microbit-specific code patterns"""
+        required_elements = criterion.get('required_elements', [])
+        found_elements = []
+        missing_elements = []
+        
+        # Check for microbit-specific imports and functions
+        if 'microbit_import' in required_elements:
+            if re.search(r'from\s+microbit\s+import', code):
+                found_elements.append('microbit_import')
+            else:
+                missing_elements.append('microbit_import')
+                
+        if 'display_image' in required_elements:
+            if re.search(r'display\.(show|scroll|get_pixel|set_pixel)', code):
+                found_elements.append('display_image')
+            else:
+                missing_elements.append('display_image')
+                
+        if 'button_input' in required_elements:
+            if re.search(r'button_(a|b)\.(was_pressed|is_pressed|get_presses)', code):
+                found_elements.append('button_input')
+            else:
+                missing_elements.append('button_input')
+                
+        # Calculate score based on found elements
+        if not required_elements:
+            score = criterion['points']  # Full points if no specific elements required
+        else:
+            score = (len(found_elements) / len(required_elements)) * criterion['points']
+        
+        # Generate feedback
+        if missing_elements:
+            feedback = f"Missing required Microbit elements: {', '.join(missing_elements)}"
+        else:
+            feedback = "All required Microbit elements found"
+            
+        return score, feedback
+
+    def _check_output(self, criterion: Dict, code: str) -> Tuple[float, str]:
+        """Check if code produces expected output"""
+        try:
+            # Create a temporary file to run the code
+            with open('temp_code.py', 'w') as f:
+                f.write(code)
+            
+            # Run the code and capture output
+            result = subprocess.run(
+                ['python3', 'temp_code.py'], 
+                capture_output=True, 
+                text=True, 
+                timeout=5  # 5 second timeout
+            )
+            
+            # Clean up temp file
+            os.remove('temp_code.py')
+            
+            actual_output = result.stdout.strip()
+            expected_output = criterion.get('expected', '').strip()
+            
+            # Check for exact match
+            if actual_output == expected_output:
+                return criterion['points'], "Output matches expected result"
+            
+            # Check for partial credit if enabled
+            if criterion.get('partial_credit', False):
+                # Simple partial credit based on string similarity
+                max_len = max(len(actual_output), len(expected_output))
+                if max_len == 0:
+                    similarity = 0
+                else:
+                    # Calculate Levenshtein distance (simplified approach)
+                    similarity = 1 - (abs(len(actual_output) - len(expected_output)) / max_len)
+                    
+                    # Additional factors to consider
+                    if expected_output in actual_output:
+                        similarity = max(similarity, 0.8)  # At least 80% if expected output is contained
+                        
+                    # Check for word-level similarity
+                    expected_words = set(expected_output.split())
+                    actual_words = set(actual_output.split())
+                    if expected_words and actual_words:
+                        common_words = expected_words.intersection(actual_words)
+                        word_similarity = len(common_words) / len(expected_words)
+                        similarity = max(similarity, word_similarity)
+                
+                score = similarity * criterion['points']
+                feedback = f"Output partially matches. Expected: '{expected_output}', Got: '{actual_output}'"
+                return score, feedback
+            
+            return 0, f"Output does not match. Expected: '{expected_output}', Got: '{actual_output}'"
+            
+        except subprocess.TimeoutExpired:
+            return 0, "Code execution timed out"
+        except Exception as e:
+            self.log(f"Output check failed: {str(e)}")
+            return 0, f"Failed to check output: {str(e)}"
+
+    def _post_to_notion(self, results: Dict) -> None:
+        """Post results to Notion database"""
+        try:
+            if not all([self.notion_key, self.notion_grades_db, self.notion_students_db]):
+                self.log("Skipping Notion post: missing credentials")
+                return
+                
+            headers = {
+                'Authorization': f'Bearer {self.notion_key}',
+                'Content-Type': 'application/json',
+                'Notion-Version': '2022-06-28'
+            }
+            
+            # Get student email from Codio environment
+            student_email = "unknown@example.com"
+            if self.codio_env and 'student' in self.codio_env:
+                student_email = self.codio_env.get('student', {}).get('email', student_email)
+            
+            # Get grade topic ID from config
+            grade_topic_id = self.config.get('notion', {}).get('grade_topic_id', '')
+            
+            # Find student page in Notion
+            student_page_id = self._find_student_in_notion(student_email)
+            if not student_page_id:
+                self.log(f"Student not found in Notion: {student_email}")
+                return
+            
+            # Format properties according to config
+            properties = {
+                "Name": {"title": [{"text": {"content": self.config['assignment']['name']}}]},
+                "Student": {"relation": [{"id": student_page_id}]},
+                "Date": {"date": {"start": datetime.utcnow().isoformat()}},
+                "Total": {"number": self.config['assignment']['points_possible']},
+                "Score": {"number": results['total_score']},
+                "Grade Topic": {"relation": [{"id": grade_topic_id}]}
+            }
+            
+            # Add configurable properties if specified
+            if 'properties' in self.config.get('notion', {}):
+                for key, template in self.config['notion']['properties'].items():
+                    if key in ["Name", "Student", "Date", "Total", "Score", "Grade Topic"]:
+                        continue  # Skip built-in properties
+                        
+                    value = template
+                    value = value
+
+#!/usr/bin/env python3
 """
 codio‑grader  v1.0  (2025‑04‑20) - Simplified Version with Notion
 

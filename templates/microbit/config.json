@@ -1,0 +1,83 @@
+{
+    "assignment": {
+        "name": "Microbit Pet Project",
+        "description": "Develop a Microbit Python program for your pet using the Flint tool to plan and design. Your pet should include at least three custom state images that change based on user interactions, incorporate at least one sound function, and be structured so that the code logic works independently of any hardware configuration.",
+        "points_possible": 100,
+        "type": "microbit",
+        "student_files": ["/home/codio/workspace/pet.py"]
+    },
+    "rubric": {
+        "categories": [
+            {
+                "name": "Pet States",
+                "points": 35,
+                "criteria": [
+                    {
+                        "description": "Implements at least three custom pet states with images",
+                        "points": 35,
+                        "type": "ai_review",
+                        "system_prompt": "You are evaluating Microbit Python code. Check if the code includes at least three distinct pet states with associated images. Answer with a number between 0 and 35 representing the score, followed by a brief justification."
+                    }
+                ]
+            },
+            {
+                "name": "User Input",
+                "points": 25,
+                "criteria": [
+                    {
+                        "description": "Implements input handling for state transitions",
+                        "points": 25,
+                        "type": "ai_review",
+                        "system_prompt": "You are evaluating Microbit Python code. Check if the code handles user input that triggers state changes in the pet. Answer with a number between 0 and 25 representing the score, followed by a brief justification."
+                    }
+                ]
+            },
+            {
+                "name": "Sound Function",
+                "points": 20,
+                "criteria": [
+                    {
+                        "description": "Implements at least one sound function",
+                        "points": 20,
+                        "type": "ai_review",
+                        "system_prompt": "You are evaluating Microbit Python code. Check if the code implements at least one sound function. Answer with a number between 0 and 20 representing the score, followed by a brief justification."
+                    }
+                ]
+            },
+            {
+                "name": "Code Quality",
+                "points": 20,
+                "criteria": [
+                    {
+                        "description": "Code is well-organized and structured to work independently of hardware",
+                        "points": 10,
+                        "type": "ai_review",
+                        "system_prompt": "You are evaluating Microbit Python code. Check if the code is structured to work independently of specific hardware configurations. Answer with a number between 0 and 10 representing the score, followed by a brief justification."
+                    },
+                    {
+                        "description": "Code is well-commented and follows best practices",
+                        "points": 10,
+                        "type": "ai_review",
+                        "system_prompt": "You are evaluating Microbit Python code. Check if the code is well-organized and properly commented. Answer with a number between 0 and 10 representing the score, followed by a brief justification."
+                    }
+                ]
+            }
+        ]
+    },
+    "ai_feedback": {
+        "enabled": true,
+        "prompt_template": "You are a kind, supportive teacher giving feedback to a middle school student. Analyze this Microbit Python code and provide constructive feedback. Focus on what they've done well and 1-2 specific, actionable improvements. Keep your tone positive and encouraging, with feedback limited to 2-3 short paragraphs.",
+        "max_suggestions": 2
+    },
+    "notion": {
+        "enabled": true,
+        "grade_topic_id": "1a82fa9286478097a92bc6c4b50e7a3a",
+        "properties": {
+            "Status": "Graded",
+            "Grade": "{{points_earned}}/{{points_possible}}",
+            "Feedback": "{{ai_feedback}}",
+            "Submission Date": "{{submission_date}}"
+        }
+    }
+}
+
